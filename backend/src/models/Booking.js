@@ -14,7 +14,7 @@ const schema = new Schema({
   packageSnapshot: { name: String, category: String, internetQuota: String, minutes: String, validity: String, firstTimeFee: String, priceNote: String },
   price: { type: Number, default: null, min: 0 },
   paymentMethod: { type: String, default: '' },
-  workflow: { type: String, enum: ['legacy', 'review_first'], default: 'legacy' },
+  workflow: { type: String, enum: ['legacy', 'review_first', 'payment_first'], default: 'legacy' },
   payment: { type: Schema.Types.ObjectId, ref: 'Payment' },
   status: { type: String, enum: STATUSES, default: 'pending', index: true },
   statusHistory: [{ _id: false, status: String, at: { type: Date, default: Date.now }, by: String, note: String }],

@@ -25,6 +25,10 @@ const linePhone = z.string().trim().transform((v, ctx) => {
   return digits;
 });
 exports.renewalRequest = z.object({ packageId: oid, customerPhone: phone, renewalPhone: linePhone });
+exports.paidRenewalRequest = exports.renewalRequest.extend({
+  paymentMethod: z.string().trim().min(1).max(50),
+  quotedPrice: z.string().trim().min(1).transform(Number).refine(v => Number.isFinite(v) && v >= 0 && v <= 100000, 'السعر غير صالح'),
+});
 exports.submitPayment = z.object({ bookingId: z.string().trim().toUpperCase().regex(/^TT-[A-Z0-9]{7}$/), phone, paymentMethod: z.string().trim().min(1).max(50) });
 exports.track = z.object({ bookingId: z.string().trim().toUpperCase().regex(/^TT-[A-Z0-9]{7}$/, 'رقم الطلب غير صحيح'), phone });
 exports.login = z.object({ email: z.string().trim().toLowerCase().email(), password: z.string().min(1).max(200) });

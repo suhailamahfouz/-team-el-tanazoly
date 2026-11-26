@@ -23,11 +23,12 @@ const Payment = require('../src/models/Payment');
 const Customer = require('../src/models/Customer');
 const Message = require('../src/models/WhatsAppMessage');
 const UserAccount = require('../src/models/UserAccount');
+const bookingService = require('../src/services/bookingService');
 
-test('review before payment and manual completion', async () => {
+test('receipt with new orders, legacy review, and manual completion', async () => {
   const dbName = `tt_flow_test_${crypto.randomBytes(6).toString('hex')}`;
   await mongoose.connect(process.env.MONGODB_URI, { dbName, serverSelectionTimeoutMS: 8000 });
-  let net, pkg, admin, settings, booking, extraBooking, mismatchBooking, receiptFile, userId, otherUserId, legacyUser;
+  let net, pkg, pricedPkg, admin, settings, booking, extraBooking, mismatchBooking, paidBooking, paidReceiptFile, extraReceiptFile, mismatchReceiptFile, receiptFile, userId, otherUserId, legacyUser;
   try {
     net = await Network.create({ key: 'test', nameAr: 'اختبار', nameEn: 'Test' });
     pkg = await Package.create({ network: net._id, name: 'عرض اختبار', category: 'internet', price: null });
@@ -57,11 +58,27 @@ test('review before payment and manual completion', async () => {
     settings = await Settings.create({ key: 'main', paymentMethods: [{ key: 'test', label: 'اختبار', accountNumber: '000000', enabled: true }] });
     const login = await request(app).post('/api/admin/auth/login').send({ email: 'test@example.invalid', password: 'test-password-123' }).expect(200);
     const auth = { Authorization: `Bearer ${login.body.token}` };
+    pricedPkg = await Package.create({ network: net._id, name: 'باقة بسعر', category: 'internet', price: 210 });
+    assert.equal((await request(app).get('/api/public/payment-methods').expect(200)).body.length, 1);
+    const paidFields = { packageId: String(pricedPkg._id), renewalPhone: '0212345678', customerPhone: '01012345678', paymentMethod: 'test', quotedPrice: '210' };
+    const png = Buffer.concat([Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]), Buffer.alloc(64)]);
+    await request(app).post('/api/bookings').field(paidFields).expect(400);
+    await request(app).post('/api/bookings').field({ ...paidFields, quotedPrice: '100' }).attach('receipt', png, 'test.png').expect(409);
+    await request(app).post('/api/bookings').field(paidFields).attach('receipt', Buffer.from('not an image'), 'test.png').expect(400);
+    const paid = await request(app).post('/api/bookings').field(paidFields).attach('receipt', png, 'test.png').expect(201);
+    assert.equal(paid.body.status, 'payment_review');
+    paidBooking = await Booking.findOne({ bookingId: paid.body.bookingId });
+    assert.equal(paidBooking.workflow, 'payment_first');
+    const paidPayment = await Payment.findOne({ booking: paidBooking._id }); paidReceiptFile = paidPayment.receipt.file;
+    assert.equal(paidPayment.status, 'pending');
+    await request(app).get(`/api/admin/bookings/${paidBooking._id}/receipt`).expect(401);
+    await request(app).get(`/api/admin/bookings/${paidBooking._id}/receipt`).set(auth).expect(200);
+    await request(app).post(`/api/admin/bookings/${paidBooking._id}/activate`).set(auth).send({}).expect(409);
     const data = { packageId: String(pkg._id), renewalPhone: '0212345678', customerPhone: '01012345678' };
-    const created = await request(app).post('/api/bookings').send(data).expect(201);
-    assert.equal(created.body.status, 'pending');
-    assert.equal(created.body.linkedToAccount, false);
-    booking = await Booking.findOne({ bookingId: created.body.bookingId });
+    await request(app).post('/api/bookings').send(data).expect(400);
+    // A previously created review-first order remains trackable and can still be approved.
+    booking = await bookingService.createRequest(data);
+    assert.equal(booking.status, 'pending');
     await request(app).get('/api/account/orders').expect(401);
     assert.equal((await request(app).get('/api/account/orders').set(customerAuth).expect(200)).body.total, 0);
     await request(app).post('/api/account/orders/link').set(customerAuth).send({ bookingId: 'TT-ABCDEFG', phone: data.customerPhone }).expect(404);
@@ -72,13 +89,15 @@ test('review before payment and manual completion', async () => {
     await request(app).post('/api/account/orders/link').set(customerAuth).send({ bookingId: booking.bookingId, phone: data.customerPhone }).expect(200);
     assert.equal((await request(app).get('/api/account/orders').set(customerAuth).expect(200)).body.total, 1);
     assert.equal((await request(app).get('/api/account/orders').set(otherAuth).expect(200)).body.total, 0);
-    const signedOrder = await request(app).post('/api/bookings').set(customerAuth).send(data).expect(201);
+    const signedOrder = await request(app).post('/api/bookings').set(customerAuth).field(paidFields).attach('receipt', png, 'test.png').expect(201);
     assert.equal(signedOrder.body.linkedToAccount, true);
     extraBooking = await Booking.findOne({ bookingId: signedOrder.body.bookingId });
+    extraReceiptFile = (await Payment.findOne({ booking: extraBooking._id })).receipt.file;
     assert.equal((await request(app).get('/api/account/orders').set(customerAuth).expect(200)).body.total, 2);
-    const mismatch = await request(app).post('/api/bookings').set(customerAuth).send({ ...data, customerPhone: '01111111111' }).expect(201);
+    const mismatch = await request(app).post('/api/bookings').set(customerAuth).field({ ...paidFields, customerPhone: '01111111111' }).attach('receipt', png, 'test.png').expect(201);
     assert.equal(mismatch.body.linkedToAccount, false);
     mismatchBooking = await Booking.findOne({ bookingId: mismatch.body.bookingId });
+    mismatchReceiptFile = (await Payment.findOne({ booking: mismatchBooking._id })).receipt.file;
     assert.equal((await request(app).get('/api/account/orders').set(customerAuth).expect(200)).body.total, 2);
     const messageData = { recipientType: 'customer', to: data.customerPhone, body: 'استلمنا طلبك وهنراجعه', event: 'booking_created' };
     await request(app).post(`/api/admin/bookings/${booking._id}/whatsapp`).set(auth).send({ ...messageData, event: 'activated' }).expect(409);
@@ -99,7 +118,6 @@ test('review before payment and manual completion', async () => {
     const tracked = await request(app).post('/api/orders/track').send(lookup).expect(200);
     assert.equal(tracked.body.status, 'awaiting_payment'); assert.equal(tracked.body.paymentMethods.length, 1);
     await request(app).post('/api/orders/track').send({ ...lookup, phone: '01099999999' }).expect(404);
-    const png = Buffer.concat([Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]), Buffer.alloc(64)]);
     await request(app).post('/api/orders/payment').field(lookup).field('paymentMethod', 'test').attach('receipt', png, 'test.png').expect(200);
     const payment = await Payment.findOne({ booking: booking._id }); receiptFile = payment.receipt.file;
     assert.equal((await Booking.findById(booking._id)).status, 'payment_review');
@@ -110,14 +128,19 @@ test('review before payment and manual completion', async () => {
     assert.equal((await Booking.findById(booking._id)).status, 'activated');
   } finally {
     if (booking) { await Message.deleteMany({ booking: booking._id }); await Payment.deleteOne({ booking: booking._id }); await Customer.deleteOne({ _id: booking.customer }); await Booking.deleteOne({ _id: booking._id }); }
-    if (extraBooking) await Booking.deleteOne({ _id: extraBooking._id });
-    if (mismatchBooking) { await Customer.deleteOne({ _id: mismatchBooking.customer }); await Booking.deleteOne({ _id: mismatchBooking._id }); }
+    if (extraBooking) { await Payment.deleteOne({ booking: extraBooking._id }); await Booking.deleteOne({ _id: extraBooking._id }); }
+    if (mismatchBooking) { await Payment.deleteOne({ booking: mismatchBooking._id }); await Customer.deleteOne({ _id: mismatchBooking.customer }); await Booking.deleteOne({ _id: mismatchBooking._id }); }
+    if (paidBooking) { await Payment.deleteOne({ booking: paidBooking._id }); await Booking.deleteOne({ _id: paidBooking._id }); }
+    if (pricedPkg) await Package.deleteOne({ _id: pricedPkg._id });
     if (pkg) await Package.deleteOne({ _id: pkg._id }); if (net) await Network.deleteOne({ _id: net._id });
     if (userId) await UserAccount.deleteOne({ _id: userId });
     if (otherUserId) await UserAccount.deleteOne({ _id: otherUserId });
     if (legacyUser) await UserAccount.deleteOne({ _id: legacyUser._id });
     if (settings) await Settings.deleteOne({ _id: settings._id }); if (admin) await Admin.deleteOne({ _id: admin._id });
     if (receiptFile) fs.unlinkSync(path.join(tempDir, 'receipts', receiptFile));
+    if (paidReceiptFile) fs.unlinkSync(path.join(tempDir, 'receipts', paidReceiptFile));
+    if (extraReceiptFile) fs.unlinkSync(path.join(tempDir, 'receipts', extraReceiptFile));
+    if (mismatchReceiptFile) fs.unlinkSync(path.join(tempDir, 'receipts', mismatchReceiptFile));
     if (fs.existsSync(path.join(tempDir, 'receipts'))) fs.rmdirSync(path.join(tempDir, 'receipts'));
     fs.rmdirSync(tempDir); await mongoose.disconnect();
   }

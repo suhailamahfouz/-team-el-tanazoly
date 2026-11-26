@@ -19,7 +19,7 @@ export interface BookingAuditEntry {
   changes: { field: string; before: unknown; after: unknown }[];
 }
 export interface Booking {
-  _id: string; bookingId: string; customerName: string; customerPhone: string; renewalPhone: string; networkName: string; network: string; workflow?: 'legacy' | 'review_first';
+  _id: string; bookingId: string; customerName: string; customerPhone: string; renewalPhone: string; networkName: string; network: string; workflow?: 'legacy' | 'review_first' | 'payment_first';
   packageSnapshot: { name: string; internetQuota: string; minutes: string; validity: string }; price: number | null; paymentMethod: string; status: string;
   statusHistory: { status: string; at: string; by: string; note?: string }[]; rejectionReason?: string; adminNotes: { text: string; by: string; at: string }[];
   auditTrail: BookingAuditEntry[]; transfers?: Transfer[]; createdAt: string;

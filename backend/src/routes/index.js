@@ -16,10 +16,11 @@ router.post('/account/orders/link', rl.trackLimiter, customerAuth.required, acco
 
 // ----- public -----
 router.get('/public/settings', pub.settings);
+router.get('/public/payment-methods', pub.paymentMethods);
 router.get('/networks', pub.networks);
 router.get('/packages', pub.packages);
 router.get('/packages/:id', pub.packageById);
-router.post('/bookings', rl.bookingLimiter, customerAuth.optional, pub.createBooking);
+router.post('/bookings', rl.bookingLimiter, customerAuth.optional, upload.single('receipt'), pub.createBooking);
 router.post('/orders/track', rl.trackLimiter, pub.track);
 router.post('/orders/payment', rl.trackLimiter, upload.single('receipt'), pub.submitPayment);
 

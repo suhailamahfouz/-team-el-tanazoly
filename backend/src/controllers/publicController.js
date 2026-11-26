@@ -20,6 +20,11 @@ exports.settings = asyncH(async (req, res) => {
   });
 });
 
+exports.paymentMethods = asyncH(async (req, res) => {
+  const settings = await Settings.findOne({ key: 'main' });
+  res.json((settings?.paymentMethods || []).filter(m => m.enabled && m.accountNumber?.trim()).map(m => ({ key: m.key, label: m.label, accountNumber: m.accountNumber, accountName: m.accountName, instructions: m.instructions })));
+});
+
 exports.networks = asyncH(async (req, res) => res.json(await Network.find({ isActive: true }).sort({ sortOrder: 1 })));
 
 exports.packages = asyncH(async (req, res) => {
@@ -41,8 +46,8 @@ exports.packageById = asyncH(async (req, res) => {
 });
 
 exports.createBooking = asyncH(async (req, res) => {
-  const data = schemas.renewalRequest.parse(req.body);
-  const b = await bookingService.createRequest(data, req.account);
+  const data = schemas.paidRenewalRequest.parse(req.body);
+  const b = await bookingService.createWithReceipt(data, req.account, req.file);
   res.status(201).json({ bookingId: b.bookingId, status: b.status, price: b.price, packageName: b.packageSnapshot.name, networkName: b.networkName, linkedToAccount: !!b.account });
 });
 
@@ -58,7 +63,8 @@ exports.track = asyncH(async (req, res) => {
   }
   res.json({
     bookingId: b.bookingId, status: b.status, networkName: b.networkName, packageName: b.packageSnapshot.name, price: b.price,
-    renewalPhone: maskPhone(b.renewalPhone), createdAt: b.createdAt, firstTimeFee: b.packageSnapshot.firstTimeFee, priceNote: b.packageSnapshot.priceNote,
+    renewalPhone: maskPhone(b.renewalPhone), createdAt: b.createdAt, firstTimeFee: b.packageSnapshot.firstTimeFee,
+    priceNote: (b.packageSnapshot.priceNote || '').replaceAll('سعر التفعيل غير مذكور؛ السعر المعروض هو سعر الباقة بعد الخصم.', '').trim(),
     rejectionReason: b.status === 'rejected' ? b.rejectionReason : undefined,
     history: b.statusHistory.map(h => ({ status: h.status, at: h.at })), paymentMethods,
   });

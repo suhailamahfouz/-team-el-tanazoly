@@ -5,6 +5,11 @@ const Payment = require('../models/Payment');
 const Transfer = require('../models/Transfer');
 const Settings = require('../models/WebsiteSettings');
 const { generateBookingId, httpError } = require('../utils/helpers');
+const { Types } = require('mongoose');
+const fs = require('fs');
+const path = require('path');
+const cfg = require('../config/env');
+const { saveVerified } = require('../middleware/upload');
 
 // Allowed lifecycle transitions. Anything else is rejected with 409.
 const ALLOWED = {
@@ -37,6 +42,51 @@ exports.createRequest = async (data, account) => {
     } catch (e) { if (e.code !== 11000 || e.keyPattern?.bookingId === undefined) throw e; }
   }
   throw httpError(500, 'تعذر إنشاء رقم الطلب، حاول مرة أخرى');
+};
+
+exports.createWithReceipt = async (data, account, file) => {
+  const pkg = await Package.findById(data.packageId).populate('network');
+  if (!pkg || !pkg.network?.isActive) throw httpError(404, 'الباقة غير موجودة');
+  if (!pkg.isAvailable) throw httpError(409, 'الباقة غير متاحة حالياً');
+  if (pkg.price == null) throw httpError(409, 'سعر الباقة لم يتحدد بعد، تواصل معنا قبل التحويل');
+  if (pkg.price !== data.quotedPrice) throw httpError(409, 'سعر الباقة اتغير. ارجع للباقات وراجع السعر قبل التحويل');
+  const settings = await Settings.findOne({ key: 'main' });
+  const method = settings?.paymentMethods?.find(m => m.key === data.paymentMethod && m.enabled && m.accountNumber?.trim());
+  if (!method) throw httpError(400, 'طريقة الدفع غير متاحة حالياً');
+  if (!file) throw httpError(400, 'ارفع صورة إثبات التحويل');
+  const receipt = saveVerified(file, { dir: 'receipts', allowPdf: true });
+  const bookingObjectId = new Types.ObjectId();
+  let customer, payment, booking;
+  try {
+    customer = await Customer.findOneAndUpdate(
+      { phone: data.customerPhone }, { $setOnInsert: { name: 'عميل' }, $inc: { bookingsCount: 1 } },
+      { upsert: true, new: true, setDefaultsOnInsert: true });
+    payment = await Payment.create({ booking: bookingObjectId, method: method.key, amount: pkg.price, receipt });
+    for (let i = 0; i < 5 && !booking; i++) {
+      try {
+        booking = await Booking.create({
+          _id: bookingObjectId, bookingId: generateBookingId(), customer: customer._id, customerName: customer.name,
+          ...(account?.phone && account.phone === data.customerPhone ? { account: account._id } : {}),
+          customerPhone: data.customerPhone, renewalPhone: data.renewalPhone,
+          network: pkg.network._id, networkName: pkg.network.nameAr, package: pkg._id,
+          packageSnapshot: { name: pkg.name, category: pkg.category, internetQuota: pkg.internetQuota, minutes: pkg.minutes, validity: pkg.validity, firstTimeFee: pkg.firstTimeFee, priceNote: pkg.priceNote },
+          price: pkg.price, paymentMethod: method.key, payment: payment._id, workflow: 'payment_first', status: 'payment_review',
+          statusHistory: [{ status: 'payment_review', by: 'customer', note: 'تم إرسال الطلب وإثبات التحويل', at: new Date() }],
+        });
+      } catch (e) { if (e.code !== 11000 || e.keyPattern?.bookingId === undefined) throw e; }
+    }
+    if (!booking) throw httpError(500, 'تعذر إنشاء رقم الطلب، حاول مرة أخرى');
+    return booking;
+  } catch (err) {
+    // If an insert succeeded but its acknowledgement was lost, preserve the order and receipt.
+    let saved;
+    try { saved = await Booking.findById(bookingObjectId); } catch { throw err; }
+    if (saved) return saved;
+    if (payment) await Payment.deleteOne({ _id: payment._id });
+    if (customer) await Customer.updateOne({ _id: customer._id }, { $inc: { bookingsCount: -1 } });
+    fs.unlinkSync(path.join(cfg.uploadDir, 'receipts', receipt.file));
+    throw err;
+  }
 };
 exports.create = async ({ data, receipt }) => {
   const pkg = await Package.findById(data.packageId).populate('network');

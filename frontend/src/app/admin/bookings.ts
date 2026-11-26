@@ -48,7 +48,7 @@ import { IconComponent } from '../shared/icon';
       <h3 style="margin-top:16px">الإجراءات</h3>
       <div class="row">
         @if (b.workflow === 'review_first' && b.status === 'pending') { <button class="btn gold sm" [disabled]="busy()" (click)="act(b, 'approve', 'هل تأكدتِ من صلاحية العرض لهذا الرقم؟')">تأكيد صلاحية العرض وطلب الدفع</button> }
-        @if (can(b, 'payment_confirmed')) { <button class="btn ok sm" [disabled]="busy()" (click)="act(b, 'confirm-payment', 'تأكيد استلام الدفع؟')"><app-icon name="circleCheck" [size]="16" /> تأكيد الدفع</button> }
+        @if (can(b, 'payment_confirmed')) { <button class="btn ok sm" [disabled]="busy()" (click)="act(b, 'confirm-payment', b.workflow === 'payment_first' ? 'هل راجعتِ صلاحية العرض للرقم وتأكدتِ من استلام الدفع؟' : 'تأكيد استلام الدفع؟')"><app-icon name="circleCheck" [size]="16" /> {{ b.workflow === 'payment_first' ? 'تأكيد العرض والدفع' : 'تأكيد الدفع' }}</button> }
         @if (b.workflow !== 'review_first' && b.status === 'pending' && can(b, 'payment_review')) { <button class="btn ghost sm" [disabled]="busy()" (click)="act(b, 'review')">مراجعة الدفع</button> }
         @if (b.status === 'payment_confirmed') { <button class="btn ghost sm" [disabled]="busy()" (click)="act(b, 'processing')"><app-icon name="refresh" [size]="16" /> جاري التنفيذ</button> }
         @if (b.status === 'payment_confirmed' || b.status === 'processing') { <button class="btn gold sm" [disabled]="busy()" (click)="act(b, 'activate', 'هل تم تجديد الباقة فعلياً؟')"><app-icon name="circleCheck" [size]="16" /> تأكيد التجديد</button> }

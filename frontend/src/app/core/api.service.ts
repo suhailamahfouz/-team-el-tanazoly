@@ -1,6 +1,6 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
-import { Booking, MyOrder, Network, Page, Pkg, Settings, Transfer, WaMessage } from './models';
+import { Booking, MyOrder, Network, Page, PaymentMethod, Pkg, Settings, Transfer, WaMessage } from './models';
 
 const clean = (o: Record<string, unknown>) => { let p = new HttpParams(); for (const [k, v] of Object.entries(o)) if (v !== '' && v != null) p = p.set(k, String(v)); return p; };
 
@@ -9,10 +9,11 @@ export class ApiService {
   private http = inject(HttpClient);
   // ---- public
   settings = () => this.http.get<Settings>('/api/public/settings');
+  paymentMethods = () => this.http.get<PaymentMethod[]>('/api/public/payment-methods');
   networks = () => this.http.get<Network[]>('/api/networks');
   packages = (q: Record<string, unknown> = {}) => this.http.get<Pkg[]>('/api/packages', { params: clean(q) });
   package = (id: string) => this.http.get<Pkg>(`/api/packages/${id}`);
-  createBooking = (body: { packageId: string; customerPhone: string; renewalPhone: string }) => this.http.post<{ bookingId: string; status: string; price: number | null; packageName: string; networkName: string; linkedToAccount: boolean }>('/api/bookings', body);
+  createBooking = (body: FormData) => this.http.post<{ bookingId: string; status: string; price: number | null; packageName: string; networkName: string; linkedToAccount: boolean }>('/api/bookings', body);
   track = (bookingId: string, phone: string) => this.http.post<any>('/api/orders/track', { bookingId, phone });
   myOrders = (page = 1) => this.http.get<Page<MyOrder>>('/api/account/orders', { params: clean({ page }) });
   linkOrder = (bookingId: string, phone: string) => this.http.post<{ linked: boolean }>('/api/account/orders/link', { bookingId, phone });

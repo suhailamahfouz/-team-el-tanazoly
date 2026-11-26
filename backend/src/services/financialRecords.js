@@ -1,6 +1,7 @@
 const Payment = require('../models/Payment');
 const Transfer = require('../models/Transfer');
 const Booking = require('../models/Booking');
+const { Types } = require('mongoose');
 const { escapeRegex, paginate } = require('../utils/helpers');
 
 // Older customer checkouts wrote the same receipt to both collections. Only
@@ -20,6 +21,10 @@ exports.list = async query => {
   const filter = {};
   if (query.status) filter.status = String(query.status);
   if (query.method) filter.method = String(query.method);
+  if (query.network) {
+    const network = String(query.network);
+    filter['booking.network'] = Types.ObjectId.isValid(network) ? new Types.ObjectId(network) : null;
+  }
   if (query.q) {
     const rx = new RegExp(escapeRegex(String(query.q).slice(0, 60)), 'i');
     filter.$or = [{ bookingId: rx }, { reference: rx }, { method: rx }];
@@ -32,7 +37,7 @@ exports.list = async query => {
     { $unionWith: { coll: Payment.collection.name, pipeline: [
       { $set: { _id: { $concat: ['payment-', { $toString: '$_id' }] }, reference: '', createdBy: 'customer' } },
     ] } },
-    { $lookup: { from: Booking.collection.name, localField: 'booking', foreignField: '_id', pipeline: [{ $project: { customerName: 1, bookingId: 1 } }], as: 'bookingData' } },
+    { $lookup: { from: Booking.collection.name, localField: 'booking', foreignField: '_id', pipeline: [{ $project: { customerName: 1, bookingId: 1, network: 1 } }], as: 'bookingData' } },
     { $set: {
       bookingId: { $ifNull: ['$bookingId', { $arrayElemAt: ['$bookingData.bookingId', 0] }] },
       booking: { $ifNull: [{ $arrayElemAt: ['$bookingData', 0] }, '$booking'] },

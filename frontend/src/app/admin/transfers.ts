@@ -2,7 +2,7 @@ import { Component, inject, signal, OnInit } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { ApiService } from '../core/api.service';
-import { Page, Transfer, WA_STATUS_LABEL } from '../core/models';
+import { Network, Page, Transfer, WA_STATUS_LABEL } from '../core/models';
 import { ToastService, fmt, fmtDate } from '../core/ui';
 import { StatusComponent } from '../shared/shared';
 import { IconComponent } from '../shared/icon';
@@ -10,6 +10,10 @@ import { IconComponent } from '../shared/icon';
 @Component({
   selector: 'app-admin-transfers', standalone: true, imports: [FormsModule, RouterLink, StatusComponent, IconComponent],
   template: `<div class="row between heading"><div><p class="eyebrow">المراجعة المالية</p><h1>التحويلات</h1><p class="muted">سجّلي التحويلات وراجعي الإيصالات وحالة كل دفعة.</p></div></div>
+    <div class="net-tabs" role="tablist">
+      <button type="button" role="tab" class="net-tab" [class.active]="!network" (click)="pickNetwork('')">الكل</button>
+      @for (n of nets(); track n._id) { <button type="button" role="tab" class="net-tab" [class.active]="network === n._id" (click)="pickNetwork(n._id)">{{ n.nameAr }}</button> }
+    </div>
     <div class="filters grid">
       <input placeholder="رقم الطلب أو المرجع أو طريقة الدفع" [(ngModel)]="q" (keyup.enter)="load(1)">
       <select [(ngModel)]="status" (ngModelChange)="load(1)"><option value="">كل الحالات</option><option value="pending">قيد المراجعة</option><option value="confirmed">مؤكد</option><option value="rejected">مرفوض</option></select>
@@ -21,15 +25,16 @@ import { IconComponent } from '../shared/icon';
       @empty { <tr><td class="empty" colspan="9">لا توجد تحويلات مطابقة</td></tr> }
     </tbody></table></div>
     @if(data(); as d){<div class="row between pages"><span class="muted">{{ d.total }} تحويل</span><div class="row"><button class="btn ghost sm" [disabled]="d.page <= 1" (click)="load(d.page-1)"><app-icon name="chevronRight" [size]="15"/> السابق</button><span>{{ d.page }} / {{ d.pages || 1 }}</span><button class="btn ghost sm" [disabled]="d.page >= d.pages" (click)="load(d.page+1)">التالي <app-icon name="chevronLeft" [size]="15"/></button></div></div>}`,
-  styles: [`.heading{margin-bottom:16px;align-items:flex-end}.heading h1{font-size:1.6rem;margin:0}.heading p{margin:3px 0}.eyebrow{font-size:.76rem;color:var(--purple-300);font-weight:800}.filters{grid-template-columns:repeat(auto-fit,minmax(170px,1fr));margin-bottom:12px}.amount{font-weight:800;color:var(--gold-400)}.link{color:var(--purple-300);font-weight:700}.pages{margin-top:12px}.small{font-size:.8rem}`],
+  styles: [`.heading{margin-bottom:16px;align-items:flex-end}.heading h1{font-size:1.6rem;margin:0}.heading p{margin:3px 0}.eyebrow{font-size:.76rem;color:var(--purple-300);font-weight:800}.net-tabs{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.net-tab{padding:9px 20px;border:1px solid var(--line);border-radius:999px;background:var(--surface-1);color:inherit;font:inherit;font-weight:600;cursor:pointer}.net-tab.active{background:var(--purple-400);border-color:var(--purple-400);color:#fff}.filters{grid-template-columns:repeat(auto-fit,minmax(170px,1fr));margin-bottom:12px}.amount{font-weight:800;color:var(--gold-400)}.link{color:var(--purple-300);font-weight:700}.pages{margin-top:12px}.small{font-size:.8rem}`],
 })
 export class AdminTransfersComponent implements OnInit {
   private api = inject(ApiService); private toast = inject(ToastService);
-  data = signal<Page<Transfer> | null>(null); q = ''; status = ''; method = '';
+  data = signal<Page<Transfer> | null>(null); q = ''; status = ''; method = ''; network = ''; nets = signal<Network[]>([]);
   methods = [{ key: 'vodafone_cash', label: 'Vodafone Cash' }, { key: 'instapay', label: 'InstaPay' }];
   fmt = fmt; fmtDate = fmtDate;
-  ngOnInit() { this.api.transferMethods().subscribe({ next: methods => this.methods = methods, error: e => this.toast.err(e) }); this.load(1); }
-  load(page: number) { this.api.transfers({ page, q: this.q, status: this.status, method: this.method }).subscribe({ next: d => this.data.set(d), error: e => this.toast.err(e) }); }
+  ngOnInit() { this.api.transferMethods().subscribe({ next: methods => this.methods = methods, error: e => this.toast.err(e) }); this.api.adminNetworks().subscribe(n => this.nets.set(n)); this.load(1); }
+  pickNetwork(id: string) { this.network = id; this.load(1); }
+  load(page: number) { this.api.transfers({ page, q: this.q, status: this.status, method: this.method, network: this.network }).subscribe({ next: d => this.data.set(d), error: e => this.toast.err(e) }); }
   customerName(t: Transfer) { return typeof t.booking === 'object' ? t.booking.customerName : '—'; }
   paymentLabel(method: string) { return this.methods.find(m => m.key === method)?.label || method; }
   receipt(t: Transfer) { this.api.transferReceipt(t._id).subscribe({ next: blob => window.open(URL.createObjectURL(blob), '_blank', 'noopener'), error: e => this.toast.err(e) }); }

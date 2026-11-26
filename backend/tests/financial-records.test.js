@@ -57,6 +57,9 @@ test('existing and future payments appear once with their order and private Grid
   assert.equal((await request(app).get('/api/admin/transfers').query({ q: order.bookingId, method: 'instapay' }).set(auth()).expect(200)).body.total, 1);
   assert.equal((await request(app).get('/api/admin/transfers').query({ q: order.bookingId, method: 'vodafone_cash', status: 'pending' }).set(auth()).expect(200)).body.total, 1);
   assert.equal((await request(app).get('/api/admin/transfers').query({ q: order.bookingId, status: 'confirmed' }).set(auth()).expect(200)).body.total, 0);
+  assert.equal((await request(app).get('/api/admin/transfers').query({ q: order.bookingId, network: String(order.network) }).set(auth()).expect(200)).body.total, 2);
+  const otherPackage = await Package.findOne({ network: { $ne: order.network } });
+  assert.equal((await request(app).get('/api/admin/transfers').query({ q: order.bookingId, network: String(otherPackage.network) }).set(auth()).expect(200)).body.total, 0);
   const first = (await request(app).get('/api/admin/transfers').query({ q: order.bookingId, limit: 1, page: 1 }).set(auth()).expect(200)).body;
   const second = (await request(app).get('/api/admin/transfers').query({ q: order.bookingId, limit: 1, page: 2 }).set(auth()).expect(200)).body;
   assert.equal(first.total, 2); assert.equal(first.pages, 2); assert.notEqual(first.items[0]._id, second.items[0]._id);

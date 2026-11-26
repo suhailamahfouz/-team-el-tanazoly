@@ -9,10 +9,13 @@ import { IconComponent } from '../shared/icon';
 @Component({
   selector: 'app-admin-bookings', standalone: true, imports: [FormsModule, StatusComponent, IconComponent],
   template: `<h1 style="font-size:1.6rem">الحجوزات</h1>
+  <div class="net-tabs" role="tablist">
+    <button type="button" role="tab" class="net-tab" [class.active]="!network" (click)="pickNetwork('')">الكل</button>
+    @for (n of nets(); track n._id) { <button type="button" role="tab" class="net-tab" [class.active]="network === n._id" (click)="pickNetwork(n._id)">{{ n.nameAr }}</button> }
+  </div>
   <div class="grid filters">
     <input placeholder="اسم / موبايل / رقم الطلب" [(ngModel)]="q" (keyup.enter)="load(1)">
     <select [(ngModel)]="status" (ngModelChange)="load(1)"><option value="">كل الحالات</option>@for (s of statuses; track s) { <option [value]="s">{{ L[s] }}</option> }</select>
-    <select [(ngModel)]="network" (ngModelChange)="load(1)"><option value="">كل الشبكات</option>@for (n of nets(); track n._id) { <option [value]="n._id">{{ n.nameAr }}</option> }</select>
     <input type="date" [(ngModel)]="from" (ngModelChange)="load(1)" title="من"><input type="date" [(ngModel)]="to" (ngModelChange)="load(1)" title="إلى">
     <button class="btn sm" (click)="load(1)">بحث</button>
   </div>
@@ -104,7 +107,7 @@ import { IconComponent } from '../shared/icon';
       <button class="btn ghost block" (click)="close()">إغلاق</button>
     </div></div>
   }`,
-  styles: [`.filters{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))} .small{font-size:.82rem}
+  styles: [`.net-tabs{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.net-tab{padding:9px 20px;border:1px solid var(--line);border-radius:999px;background:var(--surface-1);color:inherit;font:inherit;font-weight:600;cursor:pointer}.net-tab.active{background:var(--purple-400);border-color:var(--purple-400);color:#fff} .filters{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))} .small{font-size:.82rem}
   dl{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;dt{color:var(--muted)}dd{margin:0;font-weight:600}} .note{padding:10px 12px;border:1px solid var(--line);border-radius:12px;margin-bottom:8px}
   .order-details-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(190px,240px);gap:18px;align-items:start;margin:8px 0 18px}.order-fields{min-width:0}.order-fields dl{overflow-wrap:anywhere}.receipt-panel{min-width:0;padding:14px;border:1px solid var(--line);border-radius:14px;background:var(--surface-1)}.receipt-heading{display:flex;align-items:center;gap:8px;margin-bottom:10px}.receipt-heading app-icon{color:var(--purple-400)}.receipt-heading h4{margin:0;font-size:.95rem}.receipt-panel p{margin:0}.receipt-preview{display:block;overflow:hidden;border-radius:10px;background:rgba(0,0,0,.04)}.receipt-preview img{display:block;width:100%;max-height:230px;object-fit:contain}.receipt-open{width:100%;margin-top:10px;white-space:normal;text-align:center}.receipt-pdf{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:.85rem}
   .edit-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;padding:12px;border:1px solid var(--line);border-radius:14px;background:var(--surface-1)}
@@ -122,6 +125,7 @@ export class AdminBookingsComponent implements OnInit, OnDestroy {
   transferForm = signal(false); transferDraft: { amount: number | null; method: string; reference: string; note: string } = { amount: null, method: 'vodafone_cash', reference: '', note: '' }; transferReceiptFile: File | null = null;
   waEditor = signal(false); waRecipient: 'customer' | 'renewal' = 'customer'; waEvent: 'booking_created' | 'activated' | 'custom' = 'custom'; waBody = '';
   ngOnInit() { this.api.adminNetworks().subscribe(n => this.nets.set(n)); this.load(1); }
+  pickNetwork(id: string) { this.network = id; this.load(1); }
   load(page: number) { this.api.bookings({ q: this.q, status: this.status, network: this.network, from: this.from, to: this.to, page }).subscribe(d => this.data.set(d)); }
   open(id: string) {
     const version = ++this.openVersion; this.clearReceipt(); this.sel.set(null); this.rejecting.set(false); this.reason = ''; this.note = ''; this.editing.set(false); this.waEditor.set(false); this.transferForm.set(false);

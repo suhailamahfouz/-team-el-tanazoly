@@ -1,7 +1,5 @@
-const fs = require('fs');
-const path = require('path');
+const { Types } = require('mongoose');
 const bcrypt = require('bcryptjs');
-const cfg = require('../config/env');
 const Admin = require('../models/Admin');
 const Booking = require('../models/Booking');
 const Customer = require('../models/Customer');
@@ -16,6 +14,7 @@ const stats = require('../services/statsService');
 const S = require('../validators/schemas');
 const { signToken } = require('../middleware/auth');
 const { saveVerified } = require('../middleware/upload');
+const receiptStorage = require('../services/receiptStorage');
 const { asyncH, httpError, escapeRegex, paginate } = require('../utils/helpers');
 
 const DUMMY_HASH = bcrypt.hashSync('not-a-real-password', 10); // constant-time-ish login for unknown emails
@@ -87,21 +86,22 @@ exports.updateBooking = asyncH(async (req, res) => {
   }
   res.json(b);
 });
+async function streamReceipt(receipt, res) {
+  const { stream, mime } = await receiptStorage.open(receipt);
+  res.set({ 'Content-Type': mime, 'Content-Disposition': 'inline', 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'; sandbox" });
+  stream.on('error', () => { if (res.headersSent) res.destroy(); else res.status(500).json({ message: 'تعذر تحميل الإيصال' }); });
+  res.on('close', () => stream.destroy());
+  stream.pipe(res);
+}
 exports.receipt = asyncH(async (req, res) => {
   const p = await Payment.findOne({ booking: req.params.id });
   if (!p?.receipt?.file) throw httpError(404, 'لا يوجد إيصال');
-  const file = path.join(cfg.uploadDir, 'receipts', path.basename(p.receipt.file)); // basename blocks traversal
-  if (!fs.existsSync(file)) throw httpError(404, 'الملف غير موجود');
-  res.set({ 'Content-Type': p.receipt.mime, 'Content-Disposition': 'inline', 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' });
-  fs.createReadStream(file).pipe(res);
+  await streamReceipt(p.receipt, res);
 });
 exports.transferReceipt = asyncH(async (req, res) => {
   const transfer = await Transfer.findById(req.params.id);
   if (!transfer?.receipt?.file) throw httpError(404, 'لا يوجد إيصال للتحويل');
-  const file = path.join(cfg.uploadDir, 'receipts', path.basename(transfer.receipt.file));
-  if (!fs.existsSync(file)) throw httpError(404, 'ملف الإيصال غير موجود');
-  res.set({ 'Content-Type': transfer.receipt.mime, 'Content-Disposition': 'inline', 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' });
-  fs.createReadStream(file).pipe(res);
+  await streamReceipt(transfer.receipt, res);
 });
 const act = (to, withReason) => asyncH(async (req, res) => {
   const reason = withReason ? S.reject.parse(req.body).reason : undefined;
@@ -177,11 +177,21 @@ exports.createTransfer = asyncH(async (req, res) => {
   const data = S.transferCreate.parse(req.body);
   const booking = await Booking.findById(data.bookingId);
   if (!booking) throw httpError(404, 'الطلب غير موجود');
-  const receipt = saveVerified(req.file, { dir: 'receipts', allowPdf: true });
-  const transfer = await Transfer.create({
-    booking: booking._id, bookingId: booking.bookingId, amount: data.amount, method: data.method,
-    reference: data.reference || '', note: data.note || '', receipt: receipt || undefined, createdBy: req.admin.email,
-  });
+  const receipt = req.file ? await receiptStorage.save(req.file) : null;
+  const transferId = new Types.ObjectId();
+  let transfer;
+  try {
+    transfer = await Transfer.create({
+      _id: transferId, booking: booking._id, bookingId: booking.bookingId, amount: data.amount, method: data.method,
+      reference: data.reference || '', note: data.note || '', receipt: receipt || undefined, createdBy: req.admin.email,
+    });
+  } catch (err) {
+    // A committed transfer must retain its receipt even if acknowledgement was lost.
+    const saved = await Transfer.findById(transferId);
+    if (saved) transfer = saved;
+    else { if (receipt) await receiptStorage.deleteIfUnreferenced(receipt); throw err; }
+  }
+  if (receipt) await receiptStorage.markCommitted(receipt);
   booking.auditTrail.push({ action: 'transfer_added', by: req.admin.email, at: new Date(), changes: [{ field: 'transfer', before: null, after: { id: transfer._id, amount: transfer.amount, method: transfer.method, reference: transfer.reference } }] });
   await booking.save();
   res.status(201).json(transfer);

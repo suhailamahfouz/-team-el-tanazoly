@@ -6,10 +6,7 @@ const Transfer = require('../models/Transfer');
 const Settings = require('../models/WebsiteSettings');
 const { generateBookingId, httpError } = require('../utils/helpers');
 const { Types } = require('mongoose');
-const fs = require('fs');
-const path = require('path');
-const cfg = require('../config/env');
-const { saveVerified } = require('../middleware/upload');
+const receiptStorage = require('./receiptStorage');
 
 // Allowed lifecycle transitions. Anything else is rejected with 409.
 const ALLOWED = {
@@ -54,7 +51,7 @@ exports.createWithReceipt = async (data, account, file) => {
   const method = settings?.paymentMethods?.find(m => m.key === data.paymentMethod && m.enabled && m.accountNumber?.trim());
   if (!method) throw httpError(400, 'طريقة الدفع غير متاحة حالياً');
   if (!file) throw httpError(400, 'ارفع صورة إثبات التحويل');
-  const receipt = saveVerified(file, { dir: 'receipts', allowPdf: true });
+  const receipt = await receiptStorage.save(file);
   const bookingObjectId = new Types.ObjectId();
   let customer, payment, booking;
   try {
@@ -76,15 +73,17 @@ exports.createWithReceipt = async (data, account, file) => {
       } catch (e) { if (e.code !== 11000 || e.keyPattern?.bookingId === undefined) throw e; }
     }
     if (!booking) throw httpError(500, 'تعذر إنشاء رقم الطلب، حاول مرة أخرى');
+    await receiptStorage.markCommitted(receipt);
     return booking;
   } catch (err) {
     // If an insert succeeded but its acknowledgement was lost, preserve the order and receipt.
     let saved;
     try { saved = await Booking.findById(bookingObjectId); } catch { throw err; }
-    if (saved) return saved;
-    if (payment) await Payment.deleteOne({ _id: payment._id });
+    if (saved) { await receiptStorage.markCommitted(receipt); return saved; }
+    const storedPayment = payment || await Payment.findOne({ booking: bookingObjectId });
+    if (storedPayment?.receipt?.storage === 'gridfs' && storedPayment.receipt.file === receipt.file) await Payment.deleteOne({ _id: storedPayment._id, booking: bookingObjectId });
+    await receiptStorage.deleteIfUnreferenced(receipt);
     if (customer) await Customer.updateOne({ _id: customer._id }, { $inc: { bookingsCount: -1 } });
-    fs.unlinkSync(path.join(cfg.uploadDir, 'receipts', receipt.file));
     throw err;
   }
 };

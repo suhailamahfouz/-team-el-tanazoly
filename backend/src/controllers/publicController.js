@@ -1,15 +1,12 @@
-const path = require('path');
 const Network = require('../models/Network');
 const Package = require('../models/Package');
 const Booking = require('../models/Booking');
 const Settings = require('../models/WebsiteSettings');
 const bookingService = require('../services/bookingService');
 const schemas = require('../validators/schemas');
-const { saveVerified } = require('../middleware/upload');
+const receiptStorage = require('../services/receiptStorage');
 const { asyncH, httpError, escapeRegex, maskPhone } = require('../utils/helpers');
 const Payment = require('../models/Payment');
-const fs = require('fs');
-const cfg = require('../config/env');
 
 exports.settings = asyncH(async (req, res) => {
   const s = (await Settings.findOne({ key: 'main' }).lean()) || {};
@@ -78,7 +75,7 @@ exports.submitPayment = asyncH(async (req, res) => {
   const method = settings?.paymentMethods?.find(m => m.key === data.paymentMethod && m.enabled && m.accountNumber);
   if (!method) throw httpError(400, 'طريقة الدفع غير متاحة');
   if (!req.file) throw httpError(400, 'إثبات الدفع مطلوب');
-  const receipt = saveVerified(req.file, { dir: 'receipts', allowPdf: true });
+  const receipt = await receiptStorage.save(req.file);
   let payment;
   try {
     payment = await Payment.create({ booking: b._id, method: method.key, amount: b.price, receipt });
@@ -86,9 +83,13 @@ exports.submitPayment = asyncH(async (req, res) => {
       { _id: b._id, workflow: 'review_first', status: 'awaiting_payment' },
       { $set: { status: 'payment_review', payment: payment._id, paymentMethod: method.key }, $push: { statusHistory: { status: 'payment_review', by: 'customer', at: new Date(), note: 'تم رفع إثبات الدفع' } } }, { new: true });
     if (!updated) throw httpError(409, 'تغيرت حالة الطلب، يرجى تحديث الصفحة');
+    await receiptStorage.markCommitted(receipt);
   } catch (err) {
-    if (payment) await Payment.deleteOne({ _id: payment._id });
-    fs.unlinkSync(path.join(cfg.uploadDir, 'receipts', receipt.file));
+    const stored = payment || await Payment.findOne({ booking: b._id });
+    const current = await Booking.findById(b._id).select('payment status');
+    if (stored && String(current?.payment) === String(stored._id) && stored.receipt?.file === receipt.file) { await receiptStorage.markCommitted(receipt); return res.json({ status: current.status }); }
+    if (stored?.receipt?.storage === 'gridfs' && stored.receipt.file === receipt.file) await Payment.deleteOne({ _id: stored._id, booking: b._id });
+    await receiptStorage.deleteIfUnreferenced(receipt);
     if (err.code === 11000) throw httpError(409, 'تم رفع إثبات الدفع بالفعل');
     throw err;
   }

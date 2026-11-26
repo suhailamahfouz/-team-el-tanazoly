@@ -6,7 +6,7 @@ module.exports = model('Transfer', new Schema({
   amount: { type: Number, required: true, min: 0 },
   method: { type: String, required: true, trim: true, maxlength: 60 },
   reference: { type: String, default: '', trim: true, maxlength: 100 },
-  receipt: { file: String, mime: String, size: Number, originalName: String },
+  receipt: { file: String, storage: { type: String, enum: ['gridfs', 'local'] }, mime: String, size: Number, originalName: String },
   status: { type: String, enum: ['pending', 'confirmed', 'rejected'], default: 'pending', index: true },
   note: { type: String, default: '', maxlength: 500 },
   createdBy: { type: String, required: true },

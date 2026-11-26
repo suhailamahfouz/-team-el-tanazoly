@@ -92,7 +92,7 @@ export class StatusComponent {
       @if (p.firstTimeFee) { <li><b>رسوم أول مرة:</b> {{ p.firstTimeFee }}</li> }
       @for (e of p.extraDetails; track e.label) { <li><span class="muted">{{ e.label }}:</span> {{ e.value }}@if (e.note) { <small class="warn-t"> ({{ e.note }})</small> }</li> }
     </ul>
-    @if (p.description) { <p class="muted small">{{ p.description }}</p> }
+    @if (description) { <p class="muted small">{{ description }}</p> }
     <div class="row between" style="margin-top:auto;padding-top:12px">
       @if (p.price != null) { <div class="price-tag"><span><app-icon name="banknote" [size]="14" /> {{ p.priceNote.includes('أول شهر') ? 'الدفع أول شهر' : 'سعر الباقة' }}</span><strong class="price">{{ fmt(p.price) }}<small>جنيه</small></strong></div> }
       @else { <div class="badge warn">سعر التفعيل قيد التأكيد</div> }
@@ -113,4 +113,5 @@ export class PkgCardComponent {
   @Input({ required: true }) p!: Pkg; fmt = fmt;
   get net() { return typeof this.p.network === 'object' ? this.p.network : null; }
   get cat() { return CATEGORY_LABEL[this.p.category] || this.p.category; }
+  get description() { return (this.p.description || '').replace('الإعلان يذكر:', '').trim(); }
 }

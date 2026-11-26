@@ -24,7 +24,7 @@ for (const [quota, balance, cash, first, later] of [[30,123,200,450,200],[40,175
   add('etisalat', `كنسلة اتصالات ${quota} جيجا`, 'service', {
     internetQuota: `${quota} جيجا`, price: first,
     extraDetails: [{ label: 'الرصيد الصافي', value: `${balance}` }, { label: 'قيمة الفلوس', value: `${cash} جنيه` }, { label: 'الدفع أول شهر', value: `${first} جنيه` }, { label: 'الدفع بعد كده', value: `${later} جنيه` }, contact],
-    description: 'الإعلان يذكر: باقات رسمية من اتصالات، مكالمات لجميع الشبكات، إنترنت قوي وسريع، أفضل الأسعار مع تيم النزلاوي.',
+    description: 'باقات رسمية من اتصالات، مكالمات لجميع الشبكات، إنترنت قوي وسريع، أفضل الأسعار مع تيم النزلاوي.',
     priceNote: 'السعر المعروض للدفع أول شهر.', sortOrder: 200 + quota,
   });
 }
@@ -32,7 +32,7 @@ function addMobile(network, title, rows, description, order) {
   for (const [quota, mins, price] of rows) {
     add(network, `${title} ${quota} جيجا`, 'minutes_internet', {
       internetQuota: `${quota} جيجا`, minutes: `${mins} دقيقة`, price, ...(title === 'وي جولد' ? { validity: 'يوم 1 و16' } : {}),
-      extraDetails: [contact], description: description ? `الإعلان يذكر: ${description}` : '', sortOrder: order + quota,
+      extraDetails: [contact], description: description || '', sortOrder: order + quota,
     });
   }
 }

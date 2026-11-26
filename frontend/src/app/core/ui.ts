@@ -1,6 +1,7 @@
 import { Injectable, signal, inject } from '@angular/core';
 import { Settings } from './models';
 import { ApiService } from './api.service';
+import { WarmupService } from './warmup';
 
 @Injectable({ providedIn: 'root' })
 export class ToastService {
@@ -12,7 +13,9 @@ export class ToastService {
 @Injectable({ providedIn: 'root' })
 export class SettingsService {
   data = signal<Settings | null>(null);
-  constructor() { inject(ApiService).settings().subscribe({ next: s => this.data.set(s), error: () => {} }); }
+  private api = inject(ApiService);
+  constructor() { this.load(); inject(WarmupService).recovered.subscribe(() => { if (!this.data()) this.load(); }); }
+  private load() { this.api.settings().subscribe({ next: s => this.data.set(s), error: () => {} }); }
   waLink(text = '') { const n = (this.data()?.contact?.whatsapp || '01121844925').replace(/\D/g, ''); const w = n.startsWith('0') ? '2' + n : n; return w ? `https://wa.me/${w}${text ? '?text=' + encodeURIComponent(text) : ''}` : ''; }
 }
 export const fmt = (n: number | null | undefined) => n == null ? '—' : new Intl.NumberFormat('ar-EG').format(n);

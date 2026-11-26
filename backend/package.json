@@ -7,7 +7,7 @@
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "seed": "node seed/seed.js",
-    "test": "node --test --test-concurrency=1 tests/api.test.js",
+    "test": "node --test --test-concurrency=1 tests/api.test.js tests/review-first.test.js tests/gridfs.test.js tests/financial-records.test.js",
     "test:gridfs": "node --test --test-concurrency=1 tests/gridfs.test.js",
     "receipts:cleanup": "node scripts/cleanup-orphan-receipts.js"
   },

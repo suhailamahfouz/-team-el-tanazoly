@@ -50,6 +50,7 @@ a.get('/whatsapp/messages', adm.waMessages);
 a.post('/whatsapp/messages/:id/opened', adm.markWhatsAppOpened);
 a.post('/whatsapp/messages/:id/confirm', adm.confirmWhatsAppSent);
 a.get('/transfers', adm.listTransfers);
+a.get('/transfers/methods', adm.transferMethods);
 a.post('/transfers', upload.single('receipt'), adm.createTransfer);
 a.get('/transfers/:id/receipt', adm.transferReceipt);
 a.post('/transfers/:id/review', adm.reviewTransfer);

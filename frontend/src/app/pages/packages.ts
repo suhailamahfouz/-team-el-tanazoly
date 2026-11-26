@@ -8,6 +8,7 @@ import { Network, Pkg } from '../core/models';
 import { PkgCardComponent } from '../shared/shared';
 import { IconComponent } from '../shared/icon';
 import { NETWORK_PREVIEW } from '../core/network-preview';
+import { WarmupService } from '../core/warmup';
 
 @Component({
   selector: 'app-packages', standalone: true, imports: [FormsModule, PkgCardComponent, IconComponent],
@@ -34,17 +35,19 @@ import { NETWORK_PREVIEW } from '../core/network-preview';
       styles: [`.search-field{position:relative;display:block}.search-field app-icon{position:absolute;inset-inline-start:14px;top:14px;color:var(--muted);pointer-events:none}.search-field input{padding-inline-start:42px}.empty{display:flex;flex-direction:column;align-items:center;gap:10px}`],
 })
 export class PackagesComponent implements OnInit {
-  private api = inject(ApiService); private route = inject(ActivatedRoute); private router = inject(Router); private d = inject(DestroyRef);
+  private api = inject(ApiService); private route = inject(ActivatedRoute); private router = inject(Router); private d = inject(DestroyRef); private warmup = inject(WarmupService);
   nets = signal<Network[]>([]); list = signal<Pkg[]>([]); loading = signal(true); loadError = signal(false); networkPreview = signal(false); private requestId = 0;
   q = ''; network = ''; category = ''; sort = ''; search$ = new Subject<void>();
   cats = [{ k: '', t: 'كل الباقات' }, { k: 'internet', t: 'إنترنت فقط' }, { k: 'minutes_internet', t: 'دقائق + إنترنت' }, { k: 'special', t: 'عروض خاصة' }, { k: 'flex', t: 'فليكس' }, { k: 'lines', t: 'خطوط' }, { k: 'service', t: 'خدمات' }];
   ngOnInit() {
-    this.api.networks().pipe(timeout(8000)).subscribe({ next: n => { this.nets.set(n); this.networkPreview.set(false); }, error: () => { this.nets.set(NETWORK_PREVIEW); this.networkPreview.set(true); } });
+    this.loadNetworks();
+    this.warmup.recovered.pipe(takeUntilDestroyed(this.d)).subscribe(() => { if (this.networkPreview()) this.loadNetworks(); if (this.loadError()) this.load(); });
     this.network = this.route.snapshot.queryParamMap.get('network') || '';
     this.search$.pipe(debounceTime(300), takeUntilDestroyed(this.d)).subscribe(() => this.load());
     this.load();
   }
   set(k: 'network' | 'category', v: string) { this[k] = v; this.router.navigate([], { queryParams: { network: this.network || null }, replaceUrl: true }); this.load(); }
+  loadNetworks() { this.api.networks().pipe(timeout(8000)).subscribe({ next: n => { this.nets.set(n); this.networkPreview.set(false); }, error: () => { this.nets.set(NETWORK_PREVIEW); this.networkPreview.set(true); } }); }
   load() {
     const id = ++this.requestId; this.loading.set(true); this.loadError.set(false);
     this.api.packages({ q: this.q, network: this.network, category: this.category, sort: this.sort }).pipe(timeout(8000)).subscribe({ next: p => { if (id === this.requestId) { this.list.set(p); this.loading.set(false); } }, error: () => { if (id === this.requestId) { this.list.set([]); this.loading.set(false); this.loadError.set(true); } } });

@@ -29,7 +29,10 @@ async function prepare(file) {
   if (!Buffer.isBuffer(file.buffer) || !file.buffer.length || file.buffer.length > MAX_BYTES || file.size !== file.buffer.length) throw httpError(400, 'حجم الملف غير صالح (الحد الأقصى 5MB)');
   const type = TYPES.find(t => t.match(file.buffer));
   if (!type || file.mimetype !== type.mime) throw httpError(400, 'نوع الملف لا يطابق محتواه؛ استخدم JPG أو PNG أو WebP أو PDF');
-  if (type.format === 'pdf') return { type, buffer: file.buffer };
+  if (type.format === 'pdf') {
+    if (!file.buffer.subarray(Math.max(0, file.buffer.length - 2048)).includes(Buffer.from('%%EOF'))) throw httpError(400, 'ملف PDF غير مكتمل');
+    return { type, buffer: file.buffer };
+  }
   try {
     const source = sharp(file.buffer, { limitInputPixels: MAX_PIXELS, failOn: 'warning', animated: false });
     const metadata = await source.metadata();
@@ -61,8 +64,7 @@ exports.save = async file => {
   const filename = crypto.randomBytes(16).toString('hex') + type.ext;
   // Persist an upload marker first so an interrupted process can be cleaned up later.
   await mongoose.connection.db.collection(STAGING).insertOne({ _id: id, createdAt: new Date(), source: 'team-el-tanazoly' });
-  const stream = bucket().openUploadStreamWithId(id, filename, { metadata: { source: 'team-el-tanazoly', mime: type.mime } });
-  try { await pipeline(Readable.from(buffer), stream); }
+  try { const stream = bucket().openUploadStreamWithId(id, filename, { metadata: { source: 'team-el-tanazoly', mime: type.mime } }); await pipeline(Readable.from(buffer), stream); }
   catch (err) { try { await removeGridFile(id); await mongoose.connection.db.collection(STAGING).deleteOne({ _id: id, source: 'team-el-tanazoly' }); } catch (cleanupError) { console.error('[receipt] failed to clean incomplete upload:', cleanupError.message); } throw err; }
   return { file: String(id), storage: 'gridfs', mime: type.mime, size: buffer.length, originalName: String(file.originalname || '').slice(0, 120) };
 };

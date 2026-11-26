@@ -10,6 +10,7 @@ const Transfer = require('../models/Transfer');
 const Message = require('../models/WhatsAppMessage');
 const Settings = require('../models/WebsiteSettings');
 const bookingService = require('../services/bookingService');
+const financialRecords = require('../services/financialRecords');
 const stats = require('../services/statsService');
 const S = require('../validators/schemas');
 const { signToken } = require('../middleware/auth');
@@ -53,7 +54,8 @@ exports.getBooking = asyncH(async (req, res) => {
   const b = await Booking.findById(req.params.id).populate('payment');
   if (!b) throw httpError(404, 'الطلب غير موجود');
   const messages = await Message.find({ booking: b._id }).sort({ createdAt: -1 });
-  const transfers = await Transfer.find({ booking: b._id }).sort({ createdAt: -1 });
+  const allTransfers = await Transfer.find({ booking: b._id }).sort({ createdAt: -1 });
+  const transfers = allTransfers.filter(t => !financialRecords.isMirror(t, b.payment));
   const payment = b.payment?.toObject?.() || null;
   if (payment?.receipt) payment.receipt = { ...payment.receipt, url: `/api/admin/bookings/${b._id}/receipt` };
   for (const t of transfers) if (t.receipt?.file) t.receipt.url = `/api/admin/transfers/${t._id}/receipt`;
@@ -99,7 +101,10 @@ exports.receipt = asyncH(async (req, res) => {
   await streamReceipt(p.receipt, res);
 });
 exports.transferReceipt = asyncH(async (req, res) => {
-  const transfer = await Transfer.findById(req.params.id);
+  const id = req.params.id;
+  const paymentId = id.startsWith('payment-') ? id.slice(8) : null;
+  if (!Types.ObjectId.isValid(paymentId || id)) throw httpError(404, 'لا يوجد إيصال للتحويل');
+  const transfer = paymentId ? await Payment.findById(paymentId) : await Transfer.findById(id);
   if (!transfer?.receipt?.file) throw httpError(404, 'لا يوجد إيصال للتحويل');
   await streamReceipt(transfer.receipt, res);
 });
@@ -161,17 +166,18 @@ exports.confirmWhatsAppSent = asyncH(async (req, res) => {
 });
 
 // ---------- transfers ----------
+exports.transferMethods = asyncH(async (req, res) => {
+  const [settings, paymentMethods, transferMethods] = await Promise.all([
+    Settings.findOne({ key: 'main' }).select('paymentMethods.key paymentMethods.label').lean(),
+    Payment.distinct('method'), Transfer.distinct('method'),
+  ]);
+  const methods = new Map((settings?.paymentMethods || []).map(m => [m.key, m.label || m.key]));
+  for (const key of [...paymentMethods, ...transferMethods]) if (key && !methods.has(key)) methods.set(key, key);
+  if (!methods.has('other')) methods.set('other', 'وسيلة أخرى');
+  res.json([...methods].map(([key, label]) => ({ key, label })));
+});
 exports.listTransfers = asyncH(async (req, res) => {
-  const f = {};
-  if (req.query.status) f.status = String(req.query.status);
-  if (req.query.method) f.method = String(req.query.method);
-  if (req.query.q) {
-    const rx = new RegExp(escapeRegex(String(req.query.q).slice(0, 60)), 'i');
-    f.$or = [{ bookingId: rx }, { reference: rx }, { method: rx }];
-  }
-  const { page, limit, skip } = paginate(req.query);
-  const [items, total] = await Promise.all([Transfer.find(f).populate('booking', 'customerName').sort({ createdAt: -1 }).skip(skip).limit(limit), Transfer.countDocuments(f)]);
-  res.json({ items, total, page, pages: Math.ceil(total / limit) });
+  res.json(await financialRecords.list(req.query));
 });
 exports.createTransfer = asyncH(async (req, res) => {
   const data = S.transferCreate.parse(req.body);
@@ -198,20 +204,42 @@ exports.createTransfer = asyncH(async (req, res) => {
 });
 exports.reviewTransfer = asyncH(async (req, res) => {
   const { status, note } = S.transferReview.parse(req.body);
-  const transfer = await Transfer.findOneAndUpdate(
-    { _id: req.params.id, status: 'pending' },
-    { $set: { status, note: note || '', reviewedBy: req.admin.email, reviewedAt: new Date() } },
-    { new: true },
-  );
-  if (!transfer) throw httpError(409, 'التحويل غير موجود أو تمت مراجعته بالفعل');
-  const booking = await Booking.findById(transfer.booking);
-  if (booking) {
-    booking.auditTrail.push({ action: 'transfer_reviewed', by: req.admin.email, at: new Date(), changes: [{ field: `transfer:${transfer._id}.status`, before: 'pending', after: status }] });
-    await booking.save();
-    if (status === 'confirmed' && ['pending', 'payment_review'].includes(booking.status)) {
-      await bookingService.changeStatus(booking._id, 'payment_confirmed', { admin: req.admin, note: `تم تأكيد التحويل ${transfer.reference || transfer._id}` });
-    }
+  const id = req.params.id;
+  const paymentId = id.startsWith('payment-') ? id.slice(8) : null;
+  if (!Types.ObjectId.isValid(paymentId || id)) throw httpError(404, 'التحويل غير موجود');
+  const existingTransfer = paymentId ? null : await Transfer.findById(id);
+  const payment = paymentId ? await Payment.findById(paymentId) : existingTransfer && await financialRecords.matchingPayment(existingTransfer);
+  if (payment) {
+    if (payment.status !== 'pending') throw httpError(409, 'الدفعة تمت مراجعتها بالفعل');
+    await bookingService.changeStatus(payment.booking, status === 'confirmed' ? 'payment_confirmed' : 'rejected', {
+      admin: req.admin, reason: status === 'rejected' ? (note || 'تم رفض إثبات الدفع') : undefined, note,
+      expectedFrom: ['pending', 'payment_review'],
+    });
+    const reviewed = await Payment.findById(payment._id);
+    return res.json({ ...reviewed.toObject(), _id: `payment-${reviewed._id}` });
   }
+  if (paymentId) throw httpError(404, 'الدفعة غير موجودة');
+  const transfer = await bookingService.withTransaction(async session => {
+    const reviewed = await Transfer.findOneAndUpdate(
+      { _id: id, status: 'pending' },
+      { $set: { status, note: note || '', reviewedBy: req.admin.email, reviewedAt: new Date() } },
+      { new: true, session },
+    );
+    if (!reviewed) throw httpError(409, 'التحويل غير موجود أو تمت مراجعته بالفعل');
+    const booking = await Booking.findById(reviewed.booking).session(session);
+    if (booking) {
+      booking.auditTrail.push({ action: 'transfer_reviewed', by: req.admin.email, at: new Date(), changes: [{ field: `transfer:${reviewed._id}.status`, before: 'pending', after: status }] });
+      await booking.save({ session });
+      if (['pending', 'payment_review'].includes(booking.status)) {
+        await bookingService.changeStatus(booking._id, status === 'confirmed' ? 'payment_confirmed' : 'rejected', {
+          admin: req.admin, session, expectedFrom: ['pending', 'payment_review'],
+          reason: status === 'rejected' ? (note || 'تم رفض التحويل') : undefined,
+          note: `تم تأكيد التحويل ${reviewed.reference || reviewed._id}`,
+        });
+      }
+    }
+    return reviewed;
+  });
   res.json(transfer);
 });
 

@@ -7,6 +7,7 @@ const Package = require('../src/models/Package');
 const Booking = require('../src/models/Booking');
 const Message = require('../src/models/WhatsAppMessage');
 const Transfer = require('../src/models/Transfer');
+const Payment = require('../src/models/Payment');
 
 let boss, staff, pkg;
 const auth = t => ({ Authorization: `Bearer ${t}` });
@@ -17,7 +18,7 @@ before(async () => {
   staff = await H.login('staff@t.co', 'staffpassword1');
   pkg = await Package.findOne({ price: 210 });
 });
-after(async () => { await mongoose.connection.dropDatabase(); await mongoose.disconnect(); });
+after(async () => { await H.close(); });
 
 describe('catalog', () => {
   test('seed contains the current prices and Etisalat Cancel details', async () => {
@@ -48,8 +49,8 @@ describe('booking creation', () => {
     const b = await Booking.findOne({ bookingId: r.body.bookingId });
     assert.equal(b.price, 210); assert.equal(b.packageSnapshot.name, '10,400 فليكس'); assert.equal(b.customerPhone, '01012345678');
     assert.equal(await Message.countDocuments({ bookingId: r.body.bookingId }), 0, 'booking creation must not send/log an automatic message');
-    const transfer = await Transfer.findOne({ booking: b._id });
-    assert.equal(transfer.amount, 210); assert.equal(transfer.method, 'vodafone_cash'); assert.equal(transfer.status, 'pending');
+    const payment = await Payment.findOne({ booking: b._id });
+    assert.equal(payment.amount, 210); assert.equal(payment.method, 'vodafone_cash'); assert.equal(payment.status, 'pending');
     const r2 = await H.createBooking(pkg.id);
     assert.notEqual(r2.body.bookingId, r.body.bookingId);
   });

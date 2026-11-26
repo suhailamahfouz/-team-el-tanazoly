@@ -2,10 +2,10 @@ const Booking = require('../models/Booking');
 const Customer = require('../models/Customer');
 const Package = require('../models/Package');
 const Payment = require('../models/Payment');
-const Transfer = require('../models/Transfer');
 const Settings = require('../models/WebsiteSettings');
 const { generateBookingId, httpError } = require('../utils/helpers');
-const { Types } = require('mongoose');
+const mongoose = require('mongoose');
+const { Types } = mongoose;
 const receiptStorage = require('./receiptStorage');
 
 // Allowed lifecycle transitions. Anything else is rejected with 409.
@@ -120,15 +120,11 @@ exports.create = async ({ data, receipt }) => {
 
   const payment = await Payment.create({ booking: booking._id, method: method.key, amount: booking.price, receipt: receipt || undefined });
   booking.payment = payment._id; await booking.save();
-  await Transfer.create({
-    booking: booking._id, bookingId: booking.bookingId, amount: booking.price,
-    method: method.key, status: 'pending', receipt: receipt || undefined, createdBy: 'customer',
-  });
   return booking;
 };
 
-exports.changeStatus = async (id, to, { admin, reason, note }) => {
-  const from = Object.keys(ALLOWED).filter(k => ALLOWED[k].includes(to));
+async function updateStatus(id, to, { admin, reason, note, expectedFrom }, session) {
+  const from = Object.keys(ALLOWED).filter(k => ALLOWED[k].includes(to) && (!expectedFrom || expectedFrom.includes(k)));
   const workflowGuard = to === 'awaiting_payment' ? { workflow: 'review_first', price: { $type: 'number', $gte: 0 } }
     : ['payment_review', 'payment_confirmed'].includes(to) ? { $or: [{ workflow: { $ne: 'review_first' } }, { status: 'payment_review' }] } : {};
   const set = { status: to };
@@ -136,14 +132,30 @@ exports.changeStatus = async (id, to, { admin, reason, note }) => {
   if (to === 'activated') set.activatedAt = new Date();
   const booking = await Booking.findOneAndUpdate(
     { _id: id, status: { $in: from }, ...workflowGuard }, // atomic guard: prevents double activation / invalid jumps
-    { $set: set, $push: { statusHistory: { status: to, by: admin.email, note: reason || note, at: new Date() } } }, { new: true });
+    { $set: set, $push: { statusHistory: { status: to, by: admin.email, note: reason || note, at: new Date() } } }, { new: true, session });
   if (!booking) {
-    const existing = await Booking.findById(id).select('status workflow price');
+    const existing = await Booking.findById(id).select('status workflow price').session(session);
     if (to === 'awaiting_payment' && existing?.workflow === 'review_first' && existing.status === 'pending' && existing.price == null) throw httpError(409, 'حددي سعر الطلب بعد مراجعة العرض قبل طلب الدفع');
     const exists = !!existing;
     throw httpError(exists ? 409 : 404, exists ? 'لا يمكن تنفيذ هذا الإجراء على حالة الطلب الحالية' : 'الطلب غير موجود');
   }
-  if (to === 'payment_confirmed') await Payment.updateOne({ booking: booking._id }, { status: 'confirmed', reviewedBy: admin.email, reviewedAt: new Date() });
-  if (to === 'rejected' || to === 'cancelled') await Payment.updateOne({ booking: booking._id, status: 'pending' }, { status: 'rejected', reviewedBy: admin.email, reviewedAt: new Date() });
+  if (to === 'payment_confirmed') await Payment.updateOne({ booking: booking._id }, { status: 'confirmed', reviewedBy: admin.email, reviewedAt: new Date() }, { session });
+  if (to === 'rejected' || to === 'cancelled') await Payment.updateOne({ booking: booking._id, status: 'pending' }, { status: 'rejected', reviewedBy: admin.email, reviewedAt: new Date() }, { session });
   return booking;
+};
+
+exports.withTransaction = async fn => {
+  // Atlas replica sets support transactions, keeping the order and payment
+  // together even when a write fails. Retain standalone MongoDB compatibility.
+  const hello = await mongoose.connection.db.admin().command({ hello: 1 });
+  if (hello.setName || hello.msg === 'isdbgrid') {
+    return mongoose.connection.transaction(fn);
+  }
+  return fn(null);
+};
+
+exports.changeStatus = async (id, to, details) => {
+  if (Object.hasOwn(details, 'session')) return updateStatus(id, to, details, details.session);
+  if (['payment_confirmed', 'rejected', 'cancelled'].includes(to)) return exports.withTransaction(session => updateStatus(id, to, details, session));
+  return updateStatus(id, to, details, null);
 };

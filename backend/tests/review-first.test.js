@@ -1,13 +1,14 @@
-// Uses a fresh, uniquely named Atlas database. Never drops a database.
+// Uses a temporary local MongoDB instance; production data is never accessed.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const crypto = require('crypto');
-require('dotenv').config();
+const { MongoMemoryServer } = require('mongodb-memory-server');
+const sharp = require('sharp');
 process.env.NODE_ENV = 'test';
 process.env.RATE_LIMIT_DISABLED = 'true';
+process.env.MONGODB_URI = 'mongodb://127.0.0.1:1/never-use-production';
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tt-flow-test-'));
 process.env.UPLOAD_DIR = tempDir;
 const mongoose = require('mongoose');
@@ -24,10 +25,11 @@ const Customer = require('../src/models/Customer');
 const Message = require('../src/models/WhatsAppMessage');
 const UserAccount = require('../src/models/UserAccount');
 const bookingService = require('../src/services/bookingService');
+const receiptStorage = require('../src/services/receiptStorage');
 
 test('receipt with new orders, legacy review, and manual completion', async () => {
-  const dbName = `tt_flow_test_${crypto.randomBytes(6).toString('hex')}`;
-  await mongoose.connect(process.env.MONGODB_URI, { dbName, serverSelectionTimeoutMS: 8000 });
+  const mongod = await MongoMemoryServer.create({ instance: { ip: '127.0.0.1' } });
+  await mongoose.connect(mongod.getUri('tt_flow_test'));
   let net, pkg, pricedPkg, admin, settings, booking, extraBooking, mismatchBooking, paidBooking, paidReceiptFile, extraReceiptFile, mismatchReceiptFile, receiptFile, userId, otherUserId, legacyUser;
   try {
     net = await Network.create({ key: 'test', nameAr: 'اختبار', nameEn: 'Test' });
@@ -61,7 +63,7 @@ test('receipt with new orders, legacy review, and manual completion', async () =
     pricedPkg = await Package.create({ network: net._id, name: 'باقة بسعر', category: 'internet', price: 210 });
     assert.equal((await request(app).get('/api/public/payment-methods').expect(200)).body.length, 1);
     const paidFields = { packageId: String(pricedPkg._id), renewalPhone: '0212345678', customerPhone: '01012345678', paymentMethod: 'test', quotedPrice: '210' };
-    const png = Buffer.concat([Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]), Buffer.alloc(64)]);
+    const png = await sharp({ create: { width: 64, height: 64, channels: 3, background: '#ffffff' } }).png().toBuffer();
     await request(app).post('/api/bookings').field(paidFields).expect(400);
     await request(app).post('/api/bookings').field({ ...paidFields, quotedPrice: '100' }).attach('receipt', png, 'test.png').expect(409);
     await request(app).post('/api/bookings').field(paidFields).attach('receipt', Buffer.from('not an image'), 'test.png').expect(400);
@@ -137,11 +139,8 @@ test('receipt with new orders, legacy review, and manual completion', async () =
     if (otherUserId) await UserAccount.deleteOne({ _id: otherUserId });
     if (legacyUser) await UserAccount.deleteOne({ _id: legacyUser._id });
     if (settings) await Settings.deleteOne({ _id: settings._id }); if (admin) await Admin.deleteOne({ _id: admin._id });
-    if (receiptFile) fs.unlinkSync(path.join(tempDir, 'receipts', receiptFile));
-    if (paidReceiptFile) fs.unlinkSync(path.join(tempDir, 'receipts', paidReceiptFile));
-    if (extraReceiptFile) fs.unlinkSync(path.join(tempDir, 'receipts', extraReceiptFile));
-    if (mismatchReceiptFile) fs.unlinkSync(path.join(tempDir, 'receipts', mismatchReceiptFile));
+    for (const file of [receiptFile, paidReceiptFile, extraReceiptFile, mismatchReceiptFile]) if (file) await receiptStorage.deleteIfUnreferenced({ storage: 'gridfs', file });
     if (fs.existsSync(path.join(tempDir, 'receipts'))) fs.rmdirSync(path.join(tempDir, 'receipts'));
-    fs.rmdirSync(tempDir); await mongoose.disconnect();
+    fs.rmdirSync(tempDir); await mongoose.disconnect(); await mongod.stop();
   }
 });

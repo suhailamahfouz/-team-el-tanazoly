@@ -1,10 +1,12 @@
-import { Component, inject, signal } from '@angular/core';
+import { Component, DestroyRef, inject, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { ApiService } from '../core/api.service';
 import { Network } from '../core/models';
 import { NetLogoComponent } from '../shared/shared';
 import { NETWORK_PREVIEW } from '../core/network-preview';
 import { timeout } from 'rxjs';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { WarmupService } from '../core/warmup';
 
 @Component({
   selector: 'app-networks', standalone: true, imports: [RouterLink, NetLogoComponent],
@@ -23,7 +25,7 @@ import { timeout } from 'rxjs';
   styles: [`.preview{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px;font-size:.9rem}`],
 })
 export class NetworksComponent {
-  private api = inject(ApiService); nets = signal<Network[]>([]); loading = signal(true); preview = signal(false);
-  constructor() { this.load(); }
+  private api = inject(ApiService); private warmup = inject(WarmupService); private destroyRef = inject(DestroyRef); nets = signal<Network[]>([]); loading = signal(true); preview = signal(false);
+  constructor() { this.load(); this.warmup.recovered.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(() => { if (this.preview()) this.load(); }); }
   load() { this.loading.set(true); this.api.networks().pipe(timeout(8000)).subscribe({ next: n => { this.nets.set(n); this.preview.set(false); this.loading.set(false); }, error: () => { this.nets.set(NETWORK_PREVIEW); this.preview.set(true); this.loading.set(false); } }); }
 }

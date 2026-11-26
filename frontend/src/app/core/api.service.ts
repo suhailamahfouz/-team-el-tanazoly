@@ -42,6 +42,7 @@ export class ApiService {
   markWhatsAppOpened = (id: string) => this.http.post<WaMessage>(`/api/admin/whatsapp/messages/${id}/opened`, {});
   confirmWhatsAppSent = (id: string) => this.http.post<WaMessage>(`/api/admin/whatsapp/messages/${id}/confirm`, { manuallyConfirmed: true });
   transfers = (q: Record<string, unknown>) => this.http.get<Page<Transfer>>('/api/admin/transfers', { params: clean(q) });
+  transferMethods = () => this.http.get<{ key: string; label: string }[]>('/api/admin/transfers/methods');
   createTransfer = (form: FormData) => this.http.post<Transfer>('/api/admin/transfers', form);
   transferReceipt = (id: string) => this.http.get(`/api/admin/transfers/${id}/receipt`, { responseType: 'blob' });
   reviewTransfer = (id: string, status: 'confirmed' | 'rejected', note = '') => this.http.post<Transfer>(`/api/admin/transfers/${id}/review`, { status, note });

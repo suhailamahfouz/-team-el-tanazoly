@@ -13,7 +13,7 @@ import { IconComponent } from '../shared/icon';
     <div class="filters grid">
       <input placeholder="رقم الطلب أو المرجع أو طريقة الدفع" [(ngModel)]="q" (keyup.enter)="load(1)">
       <select [(ngModel)]="status" (ngModelChange)="load(1)"><option value="">كل الحالات</option><option value="pending">قيد المراجعة</option><option value="confirmed">مؤكد</option><option value="rejected">مرفوض</option></select>
-      <select [(ngModel)]="method" (ngModelChange)="load(1)"><option value="">كل وسائل الدفع</option>@for(m of methods; track m.key) { <option [value]="m.key">{{ m.label }}</option> }<option value="other">وسيلة أخرى</option></select>
+      <select [(ngModel)]="method" (ngModelChange)="load(1)"><option value="">كل وسائل الدفع</option>@for(m of methods; track m.key) { <option [value]="m.key">{{ m.label }}</option> }</select>
       <button class="btn sm" (click)="load(1)"><app-icon name="search" [size]="16" /> بحث</button>
     </div>
     <div class="table-wrap"><table><thead><tr><th>التاريخ</th><th>رقم الطلب</th><th>العميل</th><th>المبلغ</th><th>الوسيلة</th><th>المرجع</th><th>الإيصال</th><th>الحالة</th><th>الإجراء</th></tr></thead><tbody>
@@ -28,7 +28,7 @@ export class AdminTransfersComponent implements OnInit {
   data = signal<Page<Transfer> | null>(null); q = ''; status = ''; method = '';
   methods = [{ key: 'vodafone_cash', label: 'Vodafone Cash' }, { key: 'instapay', label: 'InstaPay' }];
   fmt = fmt; fmtDate = fmtDate;
-  ngOnInit() { this.api.adminSettings().subscribe(s => this.methods = (s.paymentMethods || []).map(p => ({ key: p.key, label: p.label }))); this.load(1); }
+  ngOnInit() { this.api.transferMethods().subscribe({ next: methods => this.methods = methods, error: e => this.toast.err(e) }); this.load(1); }
   load(page: number) { this.api.transfers({ page, q: this.q, status: this.status, method: this.method }).subscribe({ next: d => this.data.set(d), error: e => this.toast.err(e) }); }
   customerName(t: Transfer) { return typeof t.booking === 'object' ? t.booking.customerName : '—'; }
   paymentLabel(method: string) { return this.methods.find(m => m.key === method)?.label || method; }

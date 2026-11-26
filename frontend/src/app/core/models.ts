@@ -23,7 +23,7 @@ export interface Booking {
   packageSnapshot: { name: string; internetQuota: string; minutes: string; validity: string }; price: number | null; paymentMethod: string; status: string;
   statusHistory: { status: string; at: string; by: string; note?: string }[]; rejectionReason?: string; adminNotes: { text: string; by: string; at: string }[];
   auditTrail: BookingAuditEntry[]; transfers?: Transfer[]; createdAt: string;
-  payment?: { status: string; receipt?: { url: string; mime: string; originalName: string } } | null; messages?: WaMessage[];
+  payment?: { status: string; receipt?: { file?: string; url?: string; mime?: string; originalName?: string } } | null; messages?: WaMessage[];
 }
 export interface WaMessage {
   _id: string; booking?: string; bookingId: string; event: string; to: string; recipientType?: 'customer' | 'renewal';

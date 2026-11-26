@@ -1,4 +1,4 @@
-import { Component, inject, signal, OnInit } from '@angular/core';
+import { Component, inject, signal, OnInit, OnDestroy } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ApiService } from '../core/api.service';
 import { Booking, Network, Page, STATUS_LABEL, WA_EVENT_LABEL, Transfer, WaMessage } from '../core/models';
@@ -22,9 +22,10 @@ import { IconComponent } from '../shared/icon';
   @if (data(); as d) { <div class="row between" style="margin-top:12px"><span class="muted">{{ d.total }} حجز</span><div class="row"><button class="btn ghost sm" [disabled]="d.page <= 1" (click)="load(d.page - 1)"><app-icon name="chevronRight" [size]="15" /> السابق</button><span>{{ d.page }} / {{ d.pages || 1 }}</span><button class="btn ghost sm" [disabled]="d.page >= d.pages" (click)="load(d.page + 1)">التالي <app-icon name="chevronLeft" [size]="15" /></button></div></div> }
 
   @if (sel(); as b) {
-    <div class="modal-bg" (click)="sel.set(null)"><div class="modal" (click)="$event.stopPropagation()">
+    <div class="modal-bg" (click)="close()"><div class="modal" (click)="$event.stopPropagation()">
       <div class="row between"><h2 style="margin:0" dir="ltr">{{ b.bookingId }}</h2><app-status [value]="b.status" /></div>
       <div class="row between"><h3>بيانات الطلب</h3><button class="btn ghost sm" (click)="beginEdit(b)"><app-icon name="pencil" [size]="15" /> تعديل البيانات</button></div>
+      <div class="order-details-grid"><div class="order-fields">
       @if (editing()) { <div class="edit-grid">
         <label class="field">اسم العميل<input [(ngModel)]="draft.customerName"></label>
         <label class="field">رقم العميل<input [(ngModel)]="draft.customerPhone" dir="ltr"></label>
@@ -41,9 +42,17 @@ import { IconComponent } from '../shared/icon';
           <dt>طريقة الدفع</dt><dd>{{ b.paymentMethod }} ({{ b.payment?.status }})</dd><dt>التاريخ</dt><dd>{{ fmtDate(b.createdAt) }}</dd>
           @if (b.rejectionReason) { <dt>سبب الرفض</dt><dd>{{ b.rejectionReason }}</dd> }</dl>
       }
-
-      @if (receiptUrl()) { <h3>إيصال الدفع</h3>
-        @if (receiptIsPdf()) { <a class="btn ghost sm" [href]="receiptUrl()" target="_blank"><app-icon name="file" [size]="16" /> فتح PDF</a> } @else { <a [href]="receiptUrl()" target="_blank"><img [src]="receiptUrl()" alt="الإيصال" style="max-height:300px;border-radius:12px;border:1px solid var(--line)"></a> } }
+      </div><section class="receipt-panel" aria-label="سكرين التحويل">
+        <div class="receipt-heading"><app-icon name="receipt" [size]="18" /><h4>سكرين التحويل</h4></div>
+        @if (!b.payment?.receipt?.file) { <p class="muted small">لا يوجد إيصال مرفق بهذا الطلب.</p> }
+        @else if (receiptLoading()) { <p class="muted small">جاري تحميل الإيصال...</p> }
+        @else if (receiptError()) { <p class="muted small">تعذر تحميل الإيصال.</p><button class="btn ghost sm" type="button" (click)="loadReceipt(b._id)">حاولي مرة أخرى</button> }
+        @else if (receiptUrl()) {
+          @if (receiptIsPdf()) { <div class="receipt-pdf"><app-icon name="file" [size]="24" /><span>الإيصال مرفق كملف PDF</span></div> }
+          @else { <a class="receipt-preview" [href]="receiptUrl()" target="_blank" rel="noopener"><img [src]="receiptUrl()" alt="صورة إيصال التحويل"></a> }
+          <a class="btn ghost sm receipt-open" [href]="receiptUrl()" target="_blank" rel="noopener"><app-icon name="arrowUpRight" [size]="15" /> {{ receiptIsPdf() ? 'فتح ملف الإيصال' : 'فتح الصورة بحجم أكبر' }}</a>
+        }
+      </section></div>
 
       <h3 style="margin-top:16px">الإجراءات</h3>
       <div class="row">
@@ -92,34 +101,37 @@ import { IconComponent } from '../shared/icon';
       <ul class="timeline">@for (h of b.statusHistory.slice().reverse(); track h.at) { <li><b>{{ L[h.status] }}</b> <span class="muted small">{{ fmtDate(h.at) }} · {{ h.by }}</span>@if (h.note) { <div class="muted small">{{ h.note }}</div> }</li> }</ul>
       <h3 style="margin-top:16px">سجل التعديلات</h3>
       @for (entry of b.auditTrail || []; track entry.at) { <div class="note"><b>{{ auditLabel(entry.action) }}</b><span class="muted small"> — {{ fmtDate(entry.at) }} · {{ entry.by }}</span>@for (change of entry.changes; track change.field) { <div class="muted small">{{ change.field }}: {{ displayValue(change.before) }} ← {{ displayValue(change.after) }}</div> }</div> } @empty { <div class="muted small">لا توجد تعديلات مسجلة.</div> }
-      <button class="btn ghost block" (click)="sel.set(null)">إغلاق</button>
+      <button class="btn ghost block" (click)="close()">إغلاق</button>
     </div></div>
   }`,
   styles: [`.filters{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))} .small{font-size:.82rem}
   dl{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;dt{color:var(--muted)}dd{margin:0;font-weight:600}} .note{padding:10px 12px;border:1px solid var(--line);border-radius:12px;margin-bottom:8px}
+  .order-details-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(190px,240px);gap:18px;align-items:start;margin:8px 0 18px}.order-fields{min-width:0}.order-fields dl{overflow-wrap:anywhere}.receipt-panel{min-width:0;padding:14px;border:1px solid var(--line);border-radius:14px;background:var(--surface-1)}.receipt-heading{display:flex;align-items:center;gap:8px;margin-bottom:10px}.receipt-heading app-icon{color:var(--purple-400)}.receipt-heading h4{margin:0;font-size:.95rem}.receipt-panel p{margin:0}.receipt-preview{display:block;overflow:hidden;border-radius:10px;background:rgba(0,0,0,.04)}.receipt-preview img{display:block;width:100%;max-height:230px;object-fit:contain}.receipt-open{width:100%;margin-top:10px;white-space:normal;text-align:center}.receipt-pdf{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:.85rem}
   .edit-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;padding:12px;border:1px solid var(--line);border-radius:14px;background:var(--surface-1)}
   .edit-grid .field{font-size:.82rem}.transfer-section,.whatsapp-section{margin-top:20px;padding-top:14px;border-top:1px solid var(--line)}
   .transfer-row{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid var(--line)}.transfer-main{display:grid;gap:4px}.transfer-review{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
   .wa-editor{display:grid;gap:10px;margin-top:12px;padding:13px;border:1px solid var(--line);border-radius:14px;background:var(--surface-1)}.wa-editor p{margin:0}.message-body{white-space:pre-wrap;margin:8px 0}.text-action{display:inline-flex;align-items:center;gap:5px;width:max-content;padding:0;border:0;background:none;color:var(--purple-300);cursor:pointer;font:inherit;font-size:.82rem}
-  @media(max-width:600px){.transfer-row{flex-direction:column}.transfer-review{width:100%}.transfer-review .badge{margin-inline-end:auto}}`],
+  @media(max-width:600px){.order-details-grid{grid-template-columns:minmax(0,1fr);gap:12px}.receipt-preview img{max-height:300px}.transfer-row{flex-direction:column}.transfer-review{width:100%}.transfer-review .badge{margin-inline-end:auto}}`],
 })
-export class AdminBookingsComponent implements OnInit {
+export class AdminBookingsComponent implements OnInit, OnDestroy {
   private api = inject(ApiService); private toast = inject(ToastService);
   fmt = fmt; fmtDate = fmtDate; L = STATUS_LABEL; W = WA_EVENT_LABEL; statuses = Object.keys(STATUS_LABEL);
   q = ''; status = ''; network = ''; from = ''; to = ''; nets = signal<Network[]>([]); data = signal<Page<Booking> | null>(null);
-  sel = signal<Booking | null>(null); receiptUrl = signal(''); receiptIsPdf = signal(false); busy = signal(false); rejecting = signal(false); reason = ''; note = '';
+  sel = signal<Booking | null>(null); receiptUrl = signal(''); receiptIsPdf = signal(false); receiptLoading = signal(false); receiptError = signal(false); busy = signal(false); rejecting = signal(false); reason = ''; note = ''; private openVersion = 0; private receiptVersion = 0;
   editing = signal(false); draft: any = {};
   transferForm = signal(false); transferDraft: { amount: number | null; method: string; reference: string; note: string } = { amount: null, method: 'vodafone_cash', reference: '', note: '' }; transferReceiptFile: File | null = null;
   waEditor = signal(false); waRecipient: 'customer' | 'renewal' = 'customer'; waEvent: 'booking_created' | 'activated' | 'custom' = 'custom'; waBody = '';
   ngOnInit() { this.api.adminNetworks().subscribe(n => this.nets.set(n)); this.load(1); }
   load(page: number) { this.api.bookings({ q: this.q, status: this.status, network: this.network, from: this.from, to: this.to, page }).subscribe(d => this.data.set(d)); }
   open(id: string) {
-    this.receiptUrl.set(''); this.rejecting.set(false); this.reason = ''; this.note = ''; this.editing.set(false); this.waEditor.set(false); this.transferForm.set(false);
-    this.api.booking(id).subscribe(b => {
-      this.sel.set(b);
-      if (b.payment?.receipt) this.api.receipt(id).subscribe(blob => { this.receiptIsPdf.set(blob.type === 'application/pdf'); this.receiptUrl.set(URL.createObjectURL(blob)); });
-    });
+    const version = ++this.openVersion; this.clearReceipt(); this.sel.set(null); this.rejecting.set(false); this.reason = ''; this.note = ''; this.editing.set(false); this.waEditor.set(false); this.transferForm.set(false);
+    this.api.booking(id).subscribe({ next: b => { if (version !== this.openVersion) return; this.sel.set(b); if (b.payment?.receipt?.file) this.loadReceipt(id); }, error: e => { if (version === this.openVersion) this.toast.err(e); } });
   }
+  loadReceipt(id: string) { const version = ++this.receiptVersion; this.clearReceiptUrl(); this.receiptError.set(false); this.receiptLoading.set(true); this.api.receipt(id).subscribe({ next: blob => { if (version !== this.receiptVersion || this.sel()?._id !== id) return; this.receiptIsPdf.set(blob.type === 'application/pdf'); this.receiptUrl.set(URL.createObjectURL(blob)); this.receiptLoading.set(false); }, error: () => { if (version === this.receiptVersion && this.sel()?._id === id) { this.receiptLoading.set(false); this.receiptError.set(true); } } }); }
+  private clearReceiptUrl() { const url = this.receiptUrl(); if (url) URL.revokeObjectURL(url); this.receiptUrl.set(''); }
+  private clearReceipt() { this.receiptVersion++; this.clearReceiptUrl(); this.receiptIsPdf.set(false); this.receiptLoading.set(false); this.receiptError.set(false); }
+  close() { this.openVersion++; this.clearReceipt(); this.sel.set(null); }
+  ngOnDestroy() { this.close(); }
   can(b: Booking, to: string) { if (b.workflow === 'review_first' && b.status === 'pending' && ['payment_review', 'payment_confirmed'].includes(to)) return false; return ({ pending: ['payment_review', 'payment_confirmed', 'rejected', 'cancelled'], awaiting_payment: ['rejected', 'cancelled'], payment_review: ['payment_confirmed', 'rejected', 'cancelled'], payment_confirmed: ['processing', 'activated', 'rejected', 'cancelled'], processing: ['activated', 'rejected'] } as Record<string, string[]>)[b.status]?.includes(to) ?? false; }
   act(b: Booking, action: string, confirmMsg = '', body: object = {}) {
     if (confirmMsg && !confirm(confirmMsg)) return;
